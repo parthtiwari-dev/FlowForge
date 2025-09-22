@@ -89,3 +89,12 @@ def log_custom(message, level="info"):
         logger.error(message)
     else:
         logger.info(message)
+
+def set_log_level(level="INFO"):
+    """
+    Set the log level for the workflow logger.
+    Usage: set_log_level("DEBUG"), set_log_level("INFO"), etc.
+    """
+    logger.setLevel(level.upper())
+    for handler in logger.handlers:
+        handler.setLevel(level.upper())

@@ -36,10 +36,12 @@ Usage:
 
 Follow this design to implement robust scheduling and execution coordination for your workflow engine.
 """
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from core.task import Task, TaskState
 from core.dag import DAG
 from core.executor import LocalExecutor, ThreadedExecutor, MultiprocessExecutor
-import time
 
 class Scheduler:
     def __init__(self, dag: DAG, executor_type: str = "local", max_workers: int = 1):
@@ -55,6 +57,7 @@ class Scheduler:
         self.completed_tasks = set()
         self.failed_tasks = set()
         self.running_tasks = set()
+        self._status_lock = threading.Lock()
 
         # Set up executor according to type
         if executor_type == "thread":
@@ -65,6 +68,7 @@ class Scheduler:
             self.executor = LocalExecutor()
 
         self.executor_type = executor_type
+        self.max_workers = max_workers
 
     def run(self):
         """
@@ -73,36 +77,70 @@ class Scheduler:
         """
         self.dag.validate()
         print("=== Starting Workflow Execution ===\n")
-        while True:
-            ready_tasks = self.dag.get_ready_tasks()
-            
-            if not ready_tasks:
-                if self._all_finished():
-                    break
-                time.sleep(0.2)
-                continue
+        if self.executor_type == "thread":
+            with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+                futures = {}
+                while True:
+                    # Find all ready tasks not yet scheduled
+                    ready_tasks = [
+                        t for t in self.dag.tasks.values()
+                        if t.name not in self.completed_tasks
+                        and t.name not in self.failed_tasks
+                        and t.name not in self.running_tasks
+                        and t.is_ready()
+                    ]
+                    for task in ready_tasks:
+                        print(f"Scheduling task: {task.name}")
+                        future = pool.submit(task.run)
+                        futures[future] = task
+                        self.running_tasks.add(task.name)
 
-            if self.executor_type == "local":
-                # Run tasks sequentially
-                for task in ready_tasks:
-                    print(f"Scheduling task: {task.name}")
-                    success = self.executor.execute(task)
-                    if success:
-                        self.completed_tasks.add(task.name)
-                    elif task.state == TaskState.FAILED:
-                        self.failed_tasks.add(task.name)
-            else:
-                # Run tasks in parallel using many executor
-                print(f"Scheduling tasks: {[task.name for task in ready_tasks]}")
-                results = self.executor.execute_many(ready_tasks)
-                for i, task in enumerate(ready_tasks):
-                    if results[i]:
-                        self.completed_tasks.add(task.name)
-                    elif task.state == TaskState.FAILED:
-                        self.failed_tasks.add(task.name)
+                    if not futures:
+                        if self._all_finished():
+                            break
+                        time.sleep(0.1)
+                        continue
 
-            self.report_status()
-            time.sleep(0.1)
+                    done_future = next(as_completed(futures), None)
+                    if done_future is not None:
+                        task = futures.pop(done_future)
+                        self.running_tasks.remove(task.name)
+                        result = done_future.result()
+                        with self._status_lock:
+                            if result:
+                                self.completed_tasks.add(task.name)
+                            elif task.state == TaskState.FAILED:
+                                self.failed_tasks.add(task.name)
+                        self.report_status()
+        else:
+            # Original local/process logic
+            while True:
+                ready_tasks = self.dag.get_ready_tasks()
+                if not ready_tasks:
+                    if self._all_finished():
+                        break
+                    time.sleep(0.2)
+                    continue
+
+                if self.executor_type == "local":
+                    for task in ready_tasks:
+                        print(f"Scheduling task: {task.name}")
+                        success = self.executor.execute(task)
+                        if success:
+                            self.completed_tasks.add(task.name)
+                        elif task.state == TaskState.FAILED:
+                            self.failed_tasks.add(task.name)
+                else:
+                    print(f"Scheduling tasks: {[task.name for task in ready_tasks]}")
+                    results = self.executor.execute_many(ready_tasks)
+                    for i, task in enumerate(ready_tasks):
+                        with self._status_lock:
+                            if results[i]:
+                                self.completed_tasks.add(task.name)
+                            elif task.state == TaskState.FAILED:
+                                self.failed_tasks.add(task.name)
+                self.report_status()
+                time.sleep(0.1)
 
         print("\n=== Workflow Execution Complete ===")
         print(f"Successful tasks: {sorted(self.completed_tasks)}")

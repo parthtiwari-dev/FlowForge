@@ -39,6 +39,7 @@ on which to build the workflow orchestration engine.
 """
 
 from enum import Enum
+import threading
 
 
 class TaskState(Enum):
@@ -56,11 +57,9 @@ class Task:
         self.state = TaskState.PENDING
         self.max_retries = max_retries
         self.retry_count = 0
-        self.result = None         # <-- add this
-        self.exception = None      # <-- add this
-
-    # ... rest of the code same as optimized version
-
+        self.result = None
+        self.exception = None
+        self._lock = threading.Lock()
 
     def add_dependency(self, task):
         self.dependencies.append(task)
@@ -71,27 +70,28 @@ class Task:
 
     def run(self):
         """Execute the task respecting dependencies and retries"""
-        if not self.is_ready():
-            print(f"Task {self.name} cannot run yet. Dependencies not met.")
-            return False
+        with self._lock:
+            if not self.is_ready():
+                print(f"Task {self.name} cannot run yet. Dependencies not met.")
+                return False
 
-        self.state = TaskState.RUNNING
-        try:
-            if self.func:
-                self.result = self.func()  # <-- store result here
-            self.state = TaskState.SUCCESS
-            print(f"Task {self.name} executed successfully.")
-            return True
-        except Exception as e:
-            self.retry_count += 1
-            self.exception = e
-            print(f"Task {self.name} failed with error: {e}")
-            if self.retry_count <= self.max_retries:
-                self.state = TaskState.PENDING
-                print(f"Retrying Task {self.name} (attempt {self.retry_count})...")
-            else:
-                self.state = TaskState.FAILED
-            return False
+            self.state = TaskState.RUNNING
+            try:
+                if self.func:
+                    self.result = self.func()
+                self.state = TaskState.SUCCESS
+                print(f"Task {self.name} executed successfully.")
+                return True
+            except Exception as e:
+                self.retry_count += 1
+                self.exception = e
+                print(f"Task {self.name} failed with error: {e}")
+                if self.retry_count <= self.max_retries:
+                    self.state = TaskState.PENDING
+                    print(f"Retrying Task {self.name} (attempt {self.retry_count})...")
+                else:
+                    self.state = TaskState.FAILED
+                return False
 
     def reset(self):
         """Reset the task state and retry count for reruns"""
