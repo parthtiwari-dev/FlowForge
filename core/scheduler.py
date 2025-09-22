@@ -36,9 +36,100 @@ Usage:
 
 Follow this design to implement robust scheduling and execution coordination for your workflow engine.
 """
+from core.task import Task, TaskState
 from core.dag import DAG
-from core.task import Task
+from core.executor import LocalExecutor, ThreadedExecutor, MultiprocessExecutor
+import time
 
 class Scheduler:
-    def __init__(self):
-        
+    def __init__(self, dag: DAG, executor_type: str = "local", max_workers: int = 1):
+        """
+        Initializes the Scheduler.
+
+        Args:
+            dag (DAG): The workflow DAG to execute.
+            executor_type (str): Type of executor ("local", "thread", "process").
+            max_workers (int): Maximum number of workers for concurrency.
+        """
+        self.dag = dag
+        self.completed_tasks = set()
+        self.failed_tasks = set()
+        self.running_tasks = set()
+
+        # Set up executor according to type
+        if executor_type == "thread":
+            self.executor = ThreadedExecutor(max_workers=max_workers)
+        elif executor_type == "process":
+            self.executor = MultiprocessExecutor(max_workers=max_workers)
+        else:
+            self.executor = LocalExecutor()
+
+        self.executor_type = executor_type
+
+    def run(self):
+        """
+        Main scheduling and execution loop.
+        Executes tasks in dependency-aware order until the workflow completes.
+        """
+        self.dag.validate()
+        print("=== Starting Workflow Execution ===\n")
+        while True:
+            ready_tasks = self.dag.get_ready_tasks()
+            
+            if not ready_tasks:
+                if self._all_finished():
+                    break
+                time.sleep(0.2)
+                continue
+
+            if self.executor_type == "local":
+                # Run tasks sequentially
+                for task in ready_tasks:
+                    print(f"Scheduling task: {task.name}")
+                    success = self.executor.execute(task)
+                    if success:
+                        self.completed_tasks.add(task.name)
+                    elif task.state == TaskState.FAILED:
+                        self.failed_tasks.add(task.name)
+            else:
+                # Run tasks in parallel using many executor
+                print(f"Scheduling tasks: {[task.name for task in ready_tasks]}")
+                results = self.executor.execute_many(ready_tasks)
+                for i, task in enumerate(ready_tasks):
+                    if results[i]:
+                        self.completed_tasks.add(task.name)
+                    elif task.state == TaskState.FAILED:
+                        self.failed_tasks.add(task.name)
+
+            self.report_status()
+            time.sleep(0.1)
+
+        print("\n=== Workflow Execution Complete ===")
+        print(f"Successful tasks: {sorted(self.completed_tasks)}")
+        print(f"Failed tasks: {sorted(self.failed_tasks)}")
+
+        # Shutdown the executor pool if used
+        if self.executor_type in ("thread", "process"):
+            self.executor.shutdown()
+
+    def report_status(self):
+        """
+        Prints current status of all tasks in the workflow.
+        """
+        print("---- Current Workflow Status ----")
+        for task in self.dag.tasks.values():
+            print(f"Task {task.name}: {task.state.value} | Retries: {task.retry_count}")
+        print("---------------------------------\n")
+
+    def _all_finished(self):
+        """
+        Returns True if all tasks have completed (success or failed).
+        """
+        total = len(self.dag.tasks)
+        finished = len(self.completed_tasks) + len(self.failed_tasks)
+        return finished >= total
+    # If you want to add concurrency (threading/multiprocessing), 
+    # you would update run() to submit ready tasks to a ThreadPoolExecutor here.
+
+
+# You can now instantiate Scheduler with your DAG and call scheduler.run()
