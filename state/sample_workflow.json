@@ -1,0 +1,59 @@
+{
+  "tasks": {
+    "extract": {
+      "state": "SUCCESS",
+      "retry_count": 0,
+      "result": "raw_data",
+      "exception": null,
+      "dependencies": []
+    },
+    "transform": {
+      "state": "SUCCESS",
+      "retry_count": 1,
+      "result": "clean_data",
+      "exception": "Transform failed first time!",
+      "dependencies": [
+        "extract"
+      ]
+    },
+    "load": {
+      "state": "SUCCESS",
+      "retry_count": 0,
+      "result": "loaded",
+      "exception": null,
+      "dependencies": [
+        "transform"
+      ]
+    },
+    "fail_task": {
+      "state": "FAILED",
+      "retry_count": 4,
+      "result": null,
+      "exception": "Intentional failure",
+      "dependencies": [
+        "extract"
+      ]
+    },
+    "context_task": {
+      "state": "SUCCESS",
+      "retry_count": 0,
+      "result": "context_done",
+      "exception": null,
+      "dependencies": [
+        "load"
+      ]
+    },
+    "custom_exception_task": {
+      "state": "FAILED",
+      "retry_count": 1,
+      "result": null,
+      "exception": "Custom exception triggered!",
+      "dependencies": [
+        "context_task"
+      ]
+    }
+  },
+  "metadata": {
+    "saved_at": "2025-09-22T20:00:13.069449Z"
+  }
+}

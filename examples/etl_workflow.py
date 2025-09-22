@@ -1,23 +1,25 @@
-# ETL Workflow Example
+from dsl.workflow_dsl import workflow, task
 
-# This file contains an example of a data pipeline (extract → transform → load).
+with workflow("ETL_Workflow") as wf:
 
-def extract():
-    # Placeholder for the extraction logic
-    pass
+    @task
+    def extract():
+        print("Extracting data...")
+        return "raw_data"
 
-def transform(data):
-    # Placeholder for the transformation logic
-    pass
+    @task(max_retries=1)
+    def transform():
+        print("Transforming data...")
+        return "clean_data"
 
-def load(data):
-    # Placeholder for the loading logic
-    pass
+    @task
+    def load():
+        print("Loading data...")
+        return "loaded"
 
-def run_etl_workflow():
-    data = extract()
-    transformed_data = transform(data)
-    load(transformed_data)
+    # Set dependencies (if your DSL requires explicit dependency setup)
+    wf.get_task("transform").add_dependency(wf.get_task("extract"))
+    wf.get_task("load").add_dependency(wf.get_task("transform"))
 
-if __name__ == "__main__":
-    run_etl_workflow()
+    # Run the workflow
+    wf.run()

@@ -7,13 +7,20 @@ from core.executor import LocalExecutor, ThreadedExecutor
 from core.event import EventManager, WorkflowEvent
 from core.context import file_context, with_context
 from core.exceptions import InvalidTaskError
-from utils.logging_utils import log_task_started, log_task_succeeded, log_task_failed, log_task_retried, log_workflow_started, log_workflow_completed, set_log_level
+from utils.logging_utils import (
+    log_task_started, log_task_succeeded, log_task_failed,
+    log_task_retried, log_workflow_started, log_workflow_completed,
+    set_log_level
+)
 from utils.metrics_utils import MetricsManager
+from state.persistence import PersistenceManager
 
 # Set log level to DEBUG for full trace
 set_log_level("DEBUG")
 
+# ----------------------------
 # 1. Set up EventManager
+# ----------------------------
 events = EventManager()
 
 # Register logging functions
@@ -33,7 +40,9 @@ events.register(WorkflowEvent.TASK_RETRIED, metrics.task_retried)
 events.register(WorkflowEvent.WORKFLOW_STARTED, metrics.workflow_started)
 events.register(WorkflowEvent.WORKFLOW_COMPLETED, metrics.workflow_completed)
 
+# ----------------------------
 # 2. Define Task Logic
+# ----------------------------
 def extract():
     print("Extracting data...")
     return "raw_data"
@@ -63,7 +72,9 @@ def custom_exception_task():
     print("Raising custom exception...")
     raise InvalidTaskError("Custom exception triggered!")
 
+# ----------------------------
 # 3. Create Tasks & DAG
+# ----------------------------
 t1 = Task("extract", func=extract)
 t2 = Task("transform", func=transform, max_retries=1)
 t3 = Task("load", func=load)
@@ -86,24 +97,37 @@ for task in [t1, t2, t3, t4, t5, t6]:
 print("DAG Structure:")
 dag.print_structure()
 
-# 4. Fire Workflow Started Event
-events.notify(WorkflowEvent.WORKFLOW_STARTED)
+# ----------------------------
+# 4. Setup PersistenceManager
+# ----------------------------
+pm = PersistenceManager("state/sample_workflow.json")
+# Resume DAG from previous state if available
+pm.resume(dag)
+# Attach autosave to events
+pm.attach_to_events(events)
 
-# 5. Run with both LocalExecutor and ThreadedExecutor
+# ----------------------------
+# 5. Fire Workflow Started Event
+# ----------------------------
+events.notify(WorkflowEvent.WORKFLOW_STARTED, dag=dag)
+
+# ----------------------------
+# 6. Run Workflow
+# ----------------------------
 for executor_type in ["local", "thread"]:
     print(f"\n--- Running with executor: {executor_type} ---")
     scheduler = Scheduler(dag, executor_type=executor_type, max_workers=2)
 
-    # 6. Wrap Executor to Fire Events
+    # Wrap Executor to fire events
     def wrap_task_execution(task):
-        events.notify(WorkflowEvent.TASK_STARTED, task=task)
+        events.notify(WorkflowEvent.TASK_STARTED, task=task, dag=dag)
         success = task.run()
         if success:
-            events.notify(WorkflowEvent.TASK_SUCCEEDED, task=task)
+            events.notify(WorkflowEvent.TASK_SUCCEEDED, task=task, dag=dag)
         elif task.state == TaskState.FAILED:
-            events.notify(WorkflowEvent.TASK_FAILED, task=task, exception=task.exception)
+            events.notify(WorkflowEvent.TASK_FAILED, task=task, dag=dag, exception=task.exception)
         elif task.state == TaskState.PENDING and task.retry_count > 0:
-            events.notify(WorkflowEvent.TASK_RETRIED, task=task)
+            events.notify(WorkflowEvent.TASK_RETRIED, task=task, dag=dag)
         return success
 
     if isinstance(scheduler.executor, LocalExecutor):
@@ -125,12 +149,13 @@ for executor_type in ["local", "thread"]:
             return results
         scheduler.executor.execute_many = wrapped_execute_many
 
-    # 7. Run Workflow
     scheduler.run()
 
-    # 8. Fire Workflow Completed Event
-    events.notify(WorkflowEvent.WORKFLOW_COMPLETED)
+    # Fire workflow completed event for this executor
+    events.notify(WorkflowEvent.WORKFLOW_COMPLETED, dag=dag)
 
-    # 9. Print Metrics
-    metrics.print_task_metrics()
-    metrics.print_workflow_metrics()
+# ----------------------------
+# 7. Print Metrics
+# ----------------------------
+metrics.print_task_metrics()
+metrics.print_workflow_metrics()
