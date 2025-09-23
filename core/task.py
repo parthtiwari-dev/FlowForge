@@ -37,17 +37,14 @@ Usage:
 By completing this file as specified above, you will have a robust Task foundation
 on which to build the workflow orchestration engine.
 """
-
 from enum import Enum
 import threading
-
 
 class TaskState(Enum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     SUCCESS = "SUCCESS"
     FAILED = "FAILED"
-
 
 class Task:
     def __init__(self, name, func=None, max_retries=0):
@@ -68,30 +65,50 @@ class Task:
         """Check if all dependencies are successful"""
         return all(dep.state == TaskState.SUCCESS for dep in self.dependencies)
 
+    def is_unreachable(self):
+        """Returns True if any dependency has permanently failed (so this task can never run)."""
+        return any(dep.state == TaskState.FAILED for dep in self.dependencies)
+
     def run(self):
         """Execute the task respecting dependencies and retries"""
         with self._lock:
             if not self.is_ready():
                 print(f"Task {self.name} cannot run yet. Dependencies not met.")
                 return False
-
-            self.state = TaskState.RUNNING
-            try:
-                if self.func:
-                    self.result = self.func()
-                self.state = TaskState.SUCCESS
-                print(f"Task {self.name} executed successfully.")
-                return True
-            except Exception as e:
-                self.retry_count += 1
-                self.exception = e
-                print(f"Task {self.name} failed with error: {e}")
-                if self.retry_count <= self.max_retries:
-                    self.state = TaskState.PENDING
-                    print(f"Retrying Task {self.name} (attempt {self.retry_count})...")
-                else:
-                    self.state = TaskState.FAILED
-                return False
+            
+            # CRITICAL FIX: Track attempts correctly
+            attempts = 0
+            while attempts <= self.max_retries:
+                self.state = TaskState.RUNNING
+                try:
+                    if self.func:
+                        self.result = self.func()
+                    self.state = TaskState.SUCCESS
+                    self.exception = None
+                    # CRITICAL FIX: Set retry_count to actual attempts made (not attempts+1)
+                    self.retry_count = attempts
+                    print(f"Task {self.name} executed successfully.")
+                    return True
+                except Exception as e:
+                    self.exception = e
+                    attempts += 1
+                    print(f"Task {self.name} failed with error: {e}")
+                    
+                    if attempts > self.max_retries:
+                        self.state = TaskState.FAILED
+                        # CRITICAL FIX: Set retry_count to max_retries when exceeded
+                        self.retry_count = self.max_retries
+                        print(f"Task {self.name} failed after {attempts} attempt(s).")
+                        return False
+                    else:
+                        self.state = TaskState.PENDING
+                        self.retry_count = attempts
+                        print(f"Retrying Task {self.name} (attempt {attempts})...")
+                        # Continue the loop for retry
+            
+            # This should never be reached due to the logic above
+            self.state = TaskState.FAILED
+            return False
 
     def reset(self):
         """Reset the task state and retry count for reruns"""

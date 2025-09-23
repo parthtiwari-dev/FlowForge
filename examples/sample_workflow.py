@@ -116,7 +116,7 @@ events.notify(WorkflowEvent.WORKFLOW_STARTED, dag=dag)
 # ----------------------------
 for executor_type in ["local", "thread"]:
     print(f"\n--- Running with executor: {executor_type} ---")
-    scheduler = Scheduler(dag, executor_type=executor_type, max_workers=2)
+    scheduler = Scheduler(dag, executor_type=executor_type, max_workers=2 , events=events)
 
     # Wrap Executor to fire events
     def wrap_task_execution(task):
