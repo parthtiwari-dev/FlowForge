@@ -20,6 +20,7 @@ with workflow("ETL_Workflow") as wf:
     # Set dependencies (if your DSL requires explicit dependency setup)
     wf.dag.get_task("transform").add_dependency(wf.dag.get_task("extract"))
     wf.dag.get_task("load").add_dependency(wf.dag.get_task("transform"))
+    dag = wf.dag
 
     # Run the workflow
     wf.run()
