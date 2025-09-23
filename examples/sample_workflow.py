@@ -159,3 +159,4 @@ for executor_type in ["local", "thread"]:
 # ----------------------------
 metrics.print_task_metrics()
 metrics.print_workflow_metrics()
+
